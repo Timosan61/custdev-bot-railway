@@ -62,7 +62,8 @@ class ZepService:
                 session_id=session_id
             )
             if memory and memory.messages:
-                return memory.messages[:last_n]
+                # Return last N messages, not first N
+                return memory.messages[-last_n:] if len(memory.messages) > last_n else memory.messages
             return []
         except Exception as e:
             logger.error(f"Error getting memory for session {session_id}: {e}")

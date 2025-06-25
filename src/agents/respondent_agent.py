@@ -12,7 +12,7 @@ from datetime import datetime
 from src.services.supabase_service import SupabaseService
 from src.services.zep_service import ZepService
 from src.services.voice_handler import VoiceMessageHandler
-from src.utils.keyboards import get_finish_keyboard
+# Removed import of get_finish_keyboard
 from src.state.user_states import RespondentStates
 
 class RespondentAgent:
@@ -26,6 +26,12 @@ class RespondentAgent:
     
     async def start_interview(self, message: types.Message, state: FSMContext, interview_id: str):
         user_id = message.from_user.id
+        
+        # Check if we already have an active session
+        current_data = await state.get_data()
+        if current_data.get("session_id") and current_data.get("interview_id") == interview_id:
+            logger.info(f"Session already active for user {user_id}, interview {interview_id}")
+            return
         
         # Get interview details
         interview = self.supabase.get_interview(interview_id)
@@ -58,23 +64,27 @@ class RespondentAgent:
             interview_id=interview_id,
             session_id=session_id,
             zep_session_id=zep_session_id,
-            instruction=interview.get("fields", {}).get("instruction", interview.get("instruction", "")),
+            instruction=interview.get("instruction") or interview.get("fields", {}).get("instruction", ""),
             answers={},
             inactivity_timer=None
         )
         
-        # Send welcome message
+        # Get instruction
+        instruction = interview.get("instruction") or interview.get("fields", {}).get("instruction", "")
+        
+        # Send welcome message with instruction
         welcome_text = (
             "👋 <b>Добро пожаловать на интервью!</b>\n\n"
+            f"{instruction}\n\n"
             "Я буду задавать вам вопросы, а вы можете отвечать текстом или голосом.\n"
             "Отвечайте развернуто и честно - это поможет нам лучше понять ваши потребности.\n\n"
             "Когда захотите закончить, скажите 'хватит' или нажмите кнопку завершения."
         )
         
-        await message.answer(welcome_text, reply_markup=get_finish_keyboard())
+        await message.answer(welcome_text, reply_markup=types.ReplyKeyboardRemove())
         
         # Generate and ask first question
-        first_question = await self._generate_first_question(interview.get("fields", {}).get("instruction", interview.get("instruction", "")))
+        first_question = await self._generate_first_question(instruction)
         await message.answer(first_question)
         
         # Save first question in state
@@ -107,9 +117,6 @@ class RespondentAgent:
             text = result["transcription"]
             logger.info(f"Voice transcribed: {text}")
             
-            # Show what was recognized
-            await message.answer(f"✅ Распознано: <i>{text}</i>")
-            
             # Process the message
             await self._process_message(text, message, state)
         else:
@@ -125,6 +132,8 @@ class RespondentAgent:
         instruction = data.get("instruction", "")
         answers = data.get("answers", {})
         last_question = data.get("last_question", "")
+        finish_attempts = data.get("finish_attempts", 0)
+        last_finish_attempt = data.get("last_finish_attempt", 0)
         
         logger.info(f"Processing respondent message from user {user_id}: {text[:50]}...")
         
@@ -132,9 +141,41 @@ class RespondentAgent:
         await self.zep.add_message(zep_session_id, "user", text)
         
         # Check if user wants to finish
-        if any(word in text.lower() for word in ["хватит", "достаточно", "все", "✅ завершить"]):
-            await self._finish_interview(message, state)
-            return
+        wants_to_finish = any(word in text.lower() for word in ["хватит", "достаточно", "все", "стоп", "закончить"])
+        
+        if wants_to_finish:
+            current_time = datetime.now().timestamp()
+            
+            # Reset counter if more than 5 minutes passed since last attempt
+            if current_time - last_finish_attempt > 300:  # 5 minutes
+                finish_attempts = 0
+            
+            finish_attempts += 1
+            await state.update_data(
+                finish_attempts=finish_attempts, 
+                last_finish_attempt=current_time
+            )
+            
+            logger.info(f"User wants to finish. Attempt {finish_attempts}")
+            
+            if finish_attempts >= 2:
+                await self._finish_interview(message, state)
+                return
+            else:
+                confirmation_text = (
+                    "🤔 <b>Вы уверены, что хотите завершить интервью?</b>\n\n"
+                    "Ваши ответы очень ценны для исследования. "
+                    "Если действительно хотите закончить, скажите 'хватит' еще раз.\n\n"
+                    "Или продолжим - я задам еще несколько важных вопросов."
+                )
+                await message.answer(confirmation_text)
+                await self.zep.add_message(zep_session_id, "assistant", confirmation_text)
+                return
+        else:
+            # Reset finish attempts if user continues normally
+            if finish_attempts > 0:
+                await state.update_data(finish_attempts=0)
+                logger.debug("Reset finish attempts - user continues interview")
         
         # Save answer
         answers[last_question] = text
@@ -168,23 +209,41 @@ class RespondentAgent:
             await self._finish_interview(message, state)
     
     async def _generate_first_question(self, instruction: str) -> str:
+        # Extract style and target from instruction for better question generation
+        style = "friendly"  # default
+        target = ""
+        
+        # Simple extraction from instruction text
+        if "дружелюб" in instruction.lower():
+            style = "friendly"
+        elif "нейтрал" in instruction.lower() or "делов" in instruction.lower():
+            style = "neutral"
+        elif "эксперт" in instruction.lower():
+            style = "expert"
+        
+        with open("src/prompts/first_question_generator.txt", "r") as f:
+            template = f.read()
+        
         prompt = PromptTemplate(
-            input_variables=["instruction"],
-            template="""
-            Ты проводишь кастдев-интервью по следующей инструкции:
-            {instruction}
-            
-            Сгенерируй первый вопрос для респондента.
-            Вопрос должен быть открытым, дружелюбным и располагать к развернутому ответу.
-            
-            Верни только текст вопроса, без лишних пояснений.
-            """
+            input_variables=["instruction", "style", "target"],
+            template=template
         )
         
-        response = await self.llm.ainvoke(prompt.format(instruction=instruction))
-        return response.content
+        response = await self.llm.ainvoke(
+            prompt.format(
+                instruction=instruction,
+                style=style,
+                target=target
+            )
+        )
+        return response.content.strip()
     
     async def _generate_next_question(self, instruction: str, answers: Dict, history: List) -> Optional[str]:
+        # Ensure minimum 8 questions before allowing finish
+        answers_count = len(answers)
+        if answers_count < 8:
+            logger.info(f"Only {answers_count} questions asked, forcing continuation (minimum 8)")
+        
         # No limit on questions - interview continues until user asks to stop
         
         history_text = "\n".join([
@@ -192,48 +251,41 @@ class RespondentAgent:
             for msg in history[-6:]  # Last 3 exchanges
         ])
         
+        # Extract style from instruction
+        style = "friendly"  # default
+        if "дружелюб" in instruction.lower():
+            style = "friendly"
+        elif "нейтрал" in instruction.lower() or "делов" in instruction.lower():
+            style = "neutral"
+        elif "эксперт" in instruction.lower():
+            style = "expert"
+        
+        with open("src/prompts/next_question_generator.txt", "r") as f:
+            template = f.read()
+        
         prompt = PromptTemplate(
-            input_variables=["instruction", "history", "answers_count"],
-            template="""
-            Ты проводишь кастдев-интервью по следующей инструкции:
-            {instruction}
-            
-            История диалога:
-            {history}
-            
-            Уже задано вопросов: {answers_count}
-            
-            Сгенерируй следующий вопрос, который:
-            1. Начинается с краткого подтверждения понимания последнего ответа
-            2. Логично вытекает из предыдущего ответа
-            3. Углубляет понимание темы
-            4. Побуждает к развернутому ответу
-            5. Соответствует инструкции исследования
-            
-            Примеры хороших ответов:
-            - "Понимаю, для вас важна экономия времени. А какие еще факторы влияют на ваш выбор?"
-            - "Интересно, что вы упомянули качество материалов. Расскажите подробнее, с какими проблемами вы сталкивались?"
-            
-            ВАЖНО: Продолжай задавать уточняющие вопросы для получения максимально полной информации.
-            Верни "FINISH" ТОЛЬКО если:
-            - Респондент явно просит закончить (говорит "хватит", "достаточно", "все" и т.п.)
-            - ИЛИ респондент перестал давать содержательные ответы
-            
-            Верни только текст вопроса или "FINISH", без лишних пояснений.
-            """
+            input_variables=["instruction", "history", "questions_count", "style"],
+            template=template
         )
         
         response = await self.llm.ainvoke(
             prompt.format(
                 instruction=instruction,
                 history=history_text,
-                answers_count=len(answers)
+                questions_count=len(answers),
+                style=style
             )
         )
         
         content = response.content.strip()
-        if content == "FINISH":
-            return None
+        
+        # Дополнительная защита: если задано менее 8 вопросов, никогда не заканчиваем
+        if answers_count < 8 and content.upper() == "FINISH":
+            logger.warning(f"LLM tried to finish after only {answers_count} questions, forcing continuation")
+            # Генерируем простой follow-up вопрос
+            return "Расскажите подробнее об этом. Что еще важно знать?"
+        
+        # Убираем проверку на FINISH - интервью заканчивается только когда пользователь говорит "хватит"
         return content
     
     async def _finish_interview(self, message: types.Message, state: FSMContext):
@@ -305,12 +357,26 @@ class RespondentAgent:
             except Exception as e:
                 logger.error(f"Failed to send summary to researcher {researcher_id}: {e}")
         
-        # Thank respondent
-        thank_text = (
-            "🙏 <b>Спасибо за участие в интервью!</b>\n\n"
-            "Ваши ответы очень важны для нас и помогут улучшить наш продукт.\n"
-            "Хорошего дня!"
-        )
+        # Check for reward link
+        reward_link = None
+        if interview and "fields" in interview:
+            reward_link = interview["fields"].get("reward_link")
+        
+        # Thank respondent with reward if available
+        if reward_link:
+            thank_text = (
+                "🙏 <b>Спасибо за участие в интервью!</b>\n\n"
+                "Ваши ответы очень важны для нас и помогут улучшить наш продукт.\n\n"
+                "🎁 <b>В благодарность за ваше время, мы подготовили для вас полезный материал:</b>\n"
+                f"{reward_link}\n\n"
+                "Хорошего дня!"
+            )
+        else:
+            thank_text = (
+                "🙏 <b>Спасибо за участие в интервью!</b>\n\n"
+                "Ваши ответы очень важны для нас и помогут улучшить наш продукт.\n"
+                "Хорошего дня!"
+            )
         
         await message.answer(thank_text, reply_markup=types.ReplyKeyboardRemove())
         
@@ -320,25 +386,27 @@ class RespondentAgent:
         await state.clear()
     
     async def _generate_summary(self, answers: Dict) -> str:
+        answers_count = len(answers)
+        
+        if answers_count == 0:
+            return "Респондент не ответил ни на один вопрос."
+        elif answers_count < 3:
+            return f"Респондент ответил только на {answers_count} вопрос(а) и завершил интервью досрочно."
+        
         qa_text = "\n\n".join([
             f"Вопрос: {q}\nОтвет: {a}" 
             for q, a in answers.items()
         ])
         
+        with open("src/prompts/interview_summary_generator.txt", "r") as f:
+            template = f.read()
+        
         prompt = PromptTemplate(
-            input_variables=["qa_text"],
-            template="""
-            Проанализируй ответы респондента и создай краткое резюме (3-5 предложений).
-            
-            Вопросы и ответы:
-            {qa_text}
-            
-            Выдели ключевые инсайты, боли, потребности и пожелания респондента.
-            Пиши кратко и по существу.
-            """
+            input_variables=["qa_text", "answers_count"],
+            template=template
         )
         
-        response = await self.llm.ainvoke(prompt.format(qa_text=qa_text))
+        response = await self.llm.ainvoke(prompt.format(qa_text=qa_text, answers_count=answers_count))
         return response.content
     
     async def _send_interim_summary(self, message: types.Message, state: FSMContext, answers_count: int):
@@ -364,42 +432,90 @@ class RespondentAgent:
         # Отправляем отчет
         await self._send_message_to_researcher(researcher_id, interim_text, message.bot)
     
-    async def _send_inactivity_reminder(self, message: types.Message, state: FSMContext):
+    async def _send_inactivity_reminder(self, message: types.Message, state: FSMContext, reminder_number: int = 1):
         """Отправить напоминание о неактивности"""
-        reminder_text = (
-            "👋 <b>Вы еще здесь?</b>\n\n"
-            "Похоже, вы немного отвлеклись. Давайте продолжим наше интервью!\n"
-            "Если хотите закончить, просто скажите «хватит» или нажмите кнопку завершения."
-        )
+        data = await state.get_data()
+        
+        # Check if reminder was already sent
+        reminders_sent = data.get("reminders_sent", [])
+        if reminder_number in reminders_sent:
+            logger.debug(f"Reminder {reminder_number} already sent, skipping")
+            return
+        
+        if reminder_number == 1:
+            reminder_text = (
+                "👋 <b>Вы еще здесь?</b>\n\n"
+                "Похоже, вы немного отвлеклись. Давайте продолжим наше интервью!\n"
+                "Если хотите закончить, просто скажите «хватит» или нажмите кнопку завершения."
+            )
+        else:
+            reminder_text = (
+                "⏰ <b>Прошел уже час с момента вашей последней активности</b>\n\n"
+                "Если вы хотите продолжить интервью, пожалуйста, ответьте на последний вопрос.\n"
+                "Или скажите «хватит», чтобы завершить интервью."
+            )
         
         try:
-            await message.answer(reminder_text, reply_markup=get_finish_keyboard())
-            logger.info(f"Inactivity reminder sent to user {message.from_user.id}")
+            await message.answer(reminder_text)
+            logger.info(f"Inactivity reminder {reminder_number} sent to user {message.from_user.id}")
+            
+            # Mark reminder as sent
+            reminders_sent.append(reminder_number)
+            await state.update_data(reminders_sent=reminders_sent)
+            
+            # If this was first reminder, schedule second one after 1 hour
+            if reminder_number == 1:
+                await self._start_second_inactivity_timer(message, state)
         except Exception as e:
             logger.error(f"Failed to send inactivity reminder: {e}")
     
     async def _start_inactivity_timer(self, message: types.Message, state: FSMContext):
         """Запустить таймер неактивности"""
-        # Отменяем предыдущий таймер, если он есть
-        await self._cancel_inactivity_timer(state)
+        # Отменяем предыдущие таймеры, если они есть
+        await self._cancel_all_timers(state)
+        
+        # Reset reminders sent when user is active
+        await state.update_data(reminders_sent=[])
         
         # Создаем новый таймер на 2 минуты
         async def timer_callback():
             await asyncio.sleep(120)  # 2 минуты
-            await self._send_inactivity_reminder(message, state)
+            await self._send_inactivity_reminder(message, state, reminder_number=1)
         
         timer_task = asyncio.create_task(timer_callback())
         await state.update_data(inactivity_timer=timer_task)
         logger.debug(f"Inactivity timer started for user {message.from_user.id}")
     
-    async def _cancel_inactivity_timer(self, state: FSMContext):
-        """Отменить таймер неактивности"""
-        data = await state.get_data()
-        timer_task = data.get("inactivity_timer")
+    async def _start_second_inactivity_timer(self, message: types.Message, state: FSMContext):
+        """Запустить второй таймер неактивности (1 час)"""
+        # Создаем таймер на 1 час
+        async def timer_callback():
+            await asyncio.sleep(3600)  # 1 час
+            await self._send_inactivity_reminder(message, state, reminder_number=2)
         
+        timer_task = asyncio.create_task(timer_callback())
+        await state.update_data(second_inactivity_timer=timer_task)
+        logger.debug(f"Second inactivity timer started for user {message.from_user.id}")
+    
+    async def _cancel_all_timers(self, state: FSMContext):
+        """Отменить все таймеры неактивности"""
+        data = await state.get_data()
+        
+        # Cancel first timer
+        timer_task = data.get("inactivity_timer")
         if timer_task and not timer_task.done():
             timer_task.cancel()
-            logger.debug("Inactivity timer cancelled")
+            logger.debug("First inactivity timer cancelled")
+        
+        # Cancel second timer
+        second_timer_task = data.get("second_inactivity_timer")
+        if second_timer_task and not second_timer_task.done():
+            second_timer_task.cancel()
+            logger.debug("Second inactivity timer cancelled")
+    
+    async def _cancel_inactivity_timer(self, state: FSMContext):
+        """Отменить таймер неактивности (для обратной совместимости)"""
+        await self._cancel_all_timers(state)
     
     async def _get_researcher_id(self, interview_id: str) -> Optional[int]:
         """Получить ID исследователя из интервью"""

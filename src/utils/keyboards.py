@@ -21,16 +21,7 @@ def get_cancel_keyboard() -> types.ReplyKeyboardMarkup:
         one_time_keyboard=False
     )
 
-def get_finish_keyboard() -> types.ReplyKeyboardMarkup:
-    keyboard = [
-        [types.KeyboardButton(text="✅ Завершить")],
-        [types.KeyboardButton(text="❌ Отмена")]
-    ]
-    return types.ReplyKeyboardMarkup(
-        keyboard=keyboard,
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
+# Removed get_finish_keyboard function as per requirement
 
 def get_respondent_keyboard() -> types.ReplyKeyboardMarkup:
     keyboard = [

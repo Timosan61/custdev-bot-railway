@@ -12,7 +12,7 @@ from src.utils.keyboards import get_main_menu_keyboard, get_cancel_keyboard
 router = Router()
 
 @router.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, **kwargs):
+async def cmd_start(message: types.Message, state: FSMContext, **kwargs):
     args = message.text.split()
     
     # Check if user came with interview link
@@ -33,7 +33,7 @@ async def show_main_menu(message: types.Message, state: FSMContext, **kwargs):
     )
     await message.answer(text, reply_markup=get_main_menu_keyboard())
 
-async def start_respondent_interview(message: types.Message, state: FSMContext, interview_id: str, bot: Bot, **kwargs):
+async def start_respondent_interview(message: types.Message, state: FSMContext, interview_id: str, **kwargs):
     logger.info(f"Starting respondent interview: {interview_id}")
     supabase = kwargs.get("supabase")
     

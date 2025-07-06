@@ -4,6 +4,9 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Force rebuild cache - Updated $(date '+%Y-%m-%d %H:%M:%S')
+ENV CACHE_BUST=2024-01-15-v2
+
 # Install system dependencies with single RUN to reduce layers
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \

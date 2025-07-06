@@ -1,10 +1,26 @@
-# Полностью совместимые версии для Railway
+# Telegram Bot
 aiogram==3.15.0
 python-dotenv==1.0.1
+
+# Web API
 fastapi==0.115.5
 uvicorn==0.32.1
+
+# AI & LLM
 openai==1.58.1
+
+# Database
 supabase==2.16.0
+
+# Memory & Context
+zep-cloud==1.1.3
+
+# Logging
+loguru==0.7.2
+
+# Utilities
 aiofiles==24.1.0
 pydantic==2.9.2
-# Updated: Sun Jul  6 14:55:33 UTC 2025
+
+# Audio processing (optional)
+pydub==0.25.1

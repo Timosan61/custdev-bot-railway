@@ -1,4 +1,4 @@
-# Совместимые версии для Railway
+# Полностью совместимые версии для Railway
 aiogram==3.15.0
 python-dotenv==1.0.1
 fastapi==0.115.5

@@ -1,0 +1,227 @@
+{
+  "name": "Summary Creator Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "summary-creator",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "summary-creator-tool"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты - эксперт по анализу интервью. Создавай структурированные саммари интервью с ключевыми выводами."
+            },
+            {
+              "role": "user",
+              "content": "Создай саммари интервью:\n\nТема: {{ $json.topic }}\nКоличество вопросов: {{ $json.questions_count }}\nОтветы: {{ JSON.stringify($json.answers) }}\n\nСоздай структурированное саммари включающее:\n1. Краткое описание респондента\n2. Основные проблемы и боли\n3. Потребности и желания\n4. Ключевые инсайты\n5. Цитаты (самые важные)\n6. Рекомендации для продукта\n\nИспользуй markdown форматирование."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1500
+        }
+      },
+      "id": "generate_summary",
+      "name": "Generate Summary",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Извлеки ключевые метрики из интервью для структурированного сохранения."
+            },
+            {
+              "role": "user",
+              "content": "На основе интервью извлеки:\n\nОтветы: {{ JSON.stringify($json.answers) }}\n\nИзвлеки:\n- satisfaction_score (1-10)\n- main_problems (массив строк)\n- key_needs (массив строк)\n- product_ideas (массив строк)\n- respondent_type (новичок/опытный/эксперт)\n\nВерни JSON объект."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        }
+      },
+      "id": "extract_metrics",
+      "name": "Extract Metrics",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [450, 450],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ JSON.parse($('extract_metrics').item.json.message.content) }}",
+        "options": {}
+      },
+      "id": "parse_metrics",
+      "name": "Parse Metrics",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [650, 450]
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "summary_markdown",
+              "type": "string",
+              "value": "={{ $('generate_summary').item.json.message.content }}"
+            },
+            {
+              "name": "metrics",
+              "type": "json",
+              "value": "={{ $json }}"
+            },
+            {
+              "name": "created_at",
+              "type": "string",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "interview_duration",
+              "type": "number",
+              "value": "={{ $('webhook').item.json.duration_minutes || 0 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "combine_results",
+      "name": "Combine Results",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 350]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 350]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Generate Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Summary": {
+      "main": [
+        [
+          {
+            "node": "Combine Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Metrics": {
+      "main": [
+        [
+          {
+            "node": "Parse Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Metrics": {
+      "main": [
+        [
+          {
+            "node": "Combine Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Combine Results": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Tool for creating interview summaries with insights and metrics."
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "tool",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "respondent",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}

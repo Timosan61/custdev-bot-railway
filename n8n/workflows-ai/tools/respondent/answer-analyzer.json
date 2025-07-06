@@ -1,0 +1,194 @@
+{
+  "name": "Answer Analyzer Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "answer-analyzer",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "answer-analyzer-tool"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты - опытный аналитик интервью. Анализируй ответы респондентов на глубину, эмоциональность и информативность."
+            },
+            {
+              "role": "user",
+              "content": "Проанализируй ответ респондента:\n\nВопрос: {{ $json.question }}\nОтвет: {{ $json.answer }}\n\nОцени:\n1. Глубина ответа (1-10)\n2. Эмоциональная вовлеченность (1-10)\n3. Конкретность примеров (1-10)\n4. Выявленные проблемы или потребности\n5. Ключевые инсайты\n6. Рекомендации для следующих вопросов\n\nВерни структурированный анализ в формате JSON."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        }
+      },
+      "id": "analyze_answer",
+      "name": "Analyze Answer",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ JSON.parse($json.message.content) }}",
+        "options": {}
+      },
+      "id": "parse_json",
+      "name": "Parse JSON Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "depth_score",
+              "type": "number",
+              "value": "={{ $json.depth_score || $json['Глубина ответа'] || 5 }}"
+            },
+            {
+              "name": "emotional_score",
+              "type": "number",
+              "value": "={{ $json.emotional_score || $json['Эмоциональная вовлеченность'] || 5 }}"
+            },
+            {
+              "name": "specificity_score",
+              "type": "number",
+              "value": "={{ $json.specificity_score || $json['Конкретность примеров'] || 5 }}"
+            },
+            {
+              "name": "problems",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.problems || $json['Выявленные проблемы'] || []) }}"
+            },
+            {
+              "name": "insights",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.insights || $json['Ключевые инсайты'] || []) }}"
+            },
+            {
+              "name": "recommendations",
+              "type": "string",
+              "value": "={{ $json.recommendations || $json['Рекомендации'] || '' }}"
+            },
+            {
+              "name": "overall_quality",
+              "type": "number",
+              "value": "={{ Math.round(($json.depth_score + $json.emotional_score + $json.specificity_score) / 3) || 5 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format_analysis",
+      "name": "Format Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Analyze Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Answer": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON Response": {
+      "main": [
+        [
+          {
+            "node": "Format Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Analysis": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Tool for analyzing respondent answers quality and extracting insights."
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "tool",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "respondent",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}

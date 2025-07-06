@@ -4,8 +4,8 @@ from aiogram.fsm.context import FSMContext
 from loguru import logger
 from typing import Dict, Any
 
-from src.agents.researcher_agent import ResearcherAgent
-from src.agents.respondent_agent import RespondentAgent
+# Import factory functions instead of direct classes
+from src.agents import create_researcher_agent, create_respondent_agent
 from src.state.user_states import ResearcherStates, RespondentStates
 from src.utils.keyboards import get_main_menu_keyboard, get_cancel_keyboard
 
@@ -44,8 +44,8 @@ async def start_respondent_interview(message: types.Message, state: FSMContext, 
         await show_main_menu(message, state, **kwargs)
         return
     
-    # Initialize respondent agent
-    agent = RespondentAgent(kwargs.get("supabase"), kwargs.get("zep"))
+    # Initialize respondent agent using factory
+    agent = create_respondent_agent(kwargs.get("supabase"), kwargs.get("zep"))
     await state.update_data(agent=agent, interview_id=interview_id)
     await state.set_state(RespondentStates.answering)
     
@@ -86,8 +86,8 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
 async def start_research(message: types.Message, state: FSMContext, **kwargs):
     logger.info(f"User {message.from_user.id} starting new research")
     
-    # Initialize researcher agent
-    agent = ResearcherAgent(kwargs.get("supabase"), kwargs.get("zep"))
+    # Initialize researcher agent using factory
+    agent = create_researcher_agent(kwargs.get("supabase"), kwargs.get("zep"))
     await state.update_data(agent=agent)
     await state.set_state(ResearcherStates.collecting_info)
     
@@ -103,7 +103,7 @@ async def show_my_researches(message: types.Message, **kwargs):
 @router.message(ResearcherStates.collecting_info)
 async def process_researcher_message(message: types.Message, state: FSMContext, **kwargs):
     data = await state.get_data()
-    agent: ResearcherAgent = data.get("agent")
+    agent = data.get("agent")  # Type will be BaseResearcherAgent
     
     if not agent:
         await state.clear()
@@ -119,7 +119,7 @@ async def process_researcher_message(message: types.Message, state: FSMContext, 
 @router.message(RespondentStates.answering)
 async def process_respondent_message(message: types.Message, state: FSMContext, **kwargs):
     data = await state.get_data()
-    agent: RespondentAgent = data.get("agent")
+    agent = data.get("agent")  # Type will be BaseRespondentAgent
     
     if not agent:
         await state.clear()

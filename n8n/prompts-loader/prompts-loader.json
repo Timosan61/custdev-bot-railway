@@ -1,0 +1,34 @@
+{
+  "name": "CustDev Bot - Prompts Loader",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// This node loads prompts from files in production\n// In dev, prompts are embedded in workflows for easier testing\n\nconst operation = $input.item.json.operation;\nconst prompts = {};\n\n// In production, these would be loaded from files or database\n// For now, returning empty object to use embedded prompts\n\nreturn {\n  operation,\n  prompts\n};"
+      },
+      "id": "load_prompts",
+      "name": "Load Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Helper workflow to load prompts from external sources (files, database, etc)"
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "utility",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}

@@ -1,0 +1,197 @@
+{
+  "name": "Brief Creator Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "brief-creator",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "brief-creator-tool"
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "fields_text",
+              "type": "string",
+              "value": "=Имя: {{ $json.fields.name || 'Не указано' }}\nСфера: {{ $json.fields.industry || 'Не указано' }}\nЦелевая аудитория: {{ $json.fields.target || 'Не указано' }}\nГипотезы: {{ $json.fields.hypotheses || 'Не указано' }}\nСтиль общения: {{ $json.fields.style || 'Не указано' }}\nМетрики успеха: {{ $json.fields.success_metric || 'Не указано' }}\nОграничения: {{ $json.fields.constraints || 'Не указано' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare_data",
+      "name": "Prepare Fields Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты - эксперт по созданию интервью-брифов для кастдев-исследований. Создавай структурированные, понятные и actionable брифы."
+            },
+            {
+              "role": "user",
+              "content": "На основе собранных данных создай полный интервью-бриф:\n\n{{ $json.fields_text }}\n\nБриф должен включать:\n\n1. **Цель исследования** - четкая формулировка что хотим узнать\n2. **Ключевые гипотезы** - что предполагаем и хотим проверить\n3. **Портрет респондента** - кого ищем для интервью\n4. **Основные темы** - о чем будем говорить (5-7 тем)\n5. **Табу-темы** - чего избегать в разговоре\n6. **Критерии успеха** - как поймем что интервью удалось\n\nИспользуй эмодзи для визуального оформления."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 1000
+        }
+      },
+      "id": "generate_brief",
+      "name": "Generate Interview Brief",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "template": "# 📋 Интервью-бриф\n\n**Дата создания:** {{ $now.format('DD.MM.YYYY') }}\n**Исследователь:** {{ $('webhook').item.json.fields.name }}\n\n---\n\n{{ $json.message.content }}\n\n---\n\n## 📱 Первое сообщение для респондентов:\n\nПривет! Меня зовут {{ $('webhook').item.json.fields.name || 'Исследователь' }}. Я провожу исследование в сфере {{ $('webhook').item.json.fields.industry || 'вашей области' }}.\n\nМне интересно узнать ваш опыт и мнение. Интервью займет 10-15 минут, все ответы анонимны.\n\nГотовы начать? 🚀",
+        "options": {}
+      },
+      "id": "format_template",
+      "name": "Format Brief Template",
+      "type": "n8n-nodes-base.markdown",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "brief",
+              "type": "string",
+              "value": "={{ $json.markdown }}"
+            },
+            {
+              "name": "instruction",
+              "type": "string",
+              "value": "={{ $json.markdown.split('## 📱 Первое сообщение для респондентов:')[1] || 'Добро пожаловать на интервью!' }}"
+            },
+            {
+              "name": "created_at",
+              "type": "string",
+              "value": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare_response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Fields Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Fields Data": {
+      "main": [
+        [
+          {
+            "node": "Generate Interview Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Interview Brief": {
+      "main": [
+        [
+          {
+            "node": "Format Brief Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Brief Template": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Tool for creating interview briefs. Uses Markdown node for formatting and includes first message generation."
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "tool",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}

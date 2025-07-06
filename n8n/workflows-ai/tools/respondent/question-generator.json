@@ -1,0 +1,234 @@
+{
+  "name": "Question Generator Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "question-generator",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "question-generator-tool"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is_first",
+              "leftValue": "={{ $json.question_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check_first",
+      "name": "Is First Question?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты - опытный интервьюер. Твоя задача - начать интервью с открытого вопроса, который поможет респонденту рассказать о своем опыте."
+            },
+            {
+              "role": "user",
+              "content": "Начни интервью по теме:\n\n{{ $json.context }}\n\nСтиль общения: {{ $json.style || 'дружелюбный' }}\n\nСгенерируй первый вопрос, который:\n- Открытый и не наводящий\n- Простой для понимания\n- Располагает к развернутому ответу\n- Соответствует стилю общения"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 150
+        }
+      },
+      "id": "generate_first",
+      "name": "Generate First Question",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [650, 250],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты - опытный интервьюер. Развивай тему на основе предыдущих ответов респондента."
+            },
+            {
+              "role": "user",
+              "content": "Последний ответ: {{ $json.last_answer }}\n\nВопрос №{{ $json.question_count + 1 }}\n\nКонтекст: {{ $json.context }}\n\nСгенерируй следующий вопрос, который:\n- Развивает тему из последнего ответа\n- Углубляет понимание опыта\n- Не повторяет предыдущие вопросы\n- Остается открытым"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 150
+        }
+      },
+      "id": "generate_next",
+      "name": "Generate Next Question",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [650, 350],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "question",
+              "type": "string",
+              "value": "={{ $json.message.content }}"
+            },
+            {
+              "name": "question_number",
+              "type": "number",
+              "value": "={{ $('webhook').item.json.question_count + 1 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format_response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is First Question?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is First Question?": {
+      "main": [
+        [
+          {
+            "node": "Generate First Question",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Next Question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate First Question": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Next Question": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Tool for generating interview questions. Handles both first and follow-up questions."
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "tool",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "respondent",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}

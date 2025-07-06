@@ -1,11 +1,8 @@
-from typing import Dict, Optional
-from aiogram import types, Bot
+from abc import ABC, abstractmethod
+from typing import Dict, Optional, List
+from aiogram import types
 from aiogram.fsm.context import FSMContext
-from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate
 from loguru import logger
-import json
-import re
 import os
 
 from src.services.supabase_service import SupabaseService
@@ -14,14 +11,16 @@ from src.services.voice_handler import VoiceMessageHandler
 from src.utils.keyboards import get_cancel_keyboard
 from src.state.user_states import ResearcherStates
 
-class ResearcherAgent:
+
+class BaseResearcherAgent(ABC):
+    """Базовый класс для агента исследователя с абстрактными методами для LLM операций"""
+    
     def __init__(self, supabase: SupabaseService, zep: ZepService):
         self.supabase = supabase
         self.zep = zep
         # Initialize voice handler with bot token
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.voice_handler = VoiceMessageHandler(bot_token=bot_token)
-        self.llm = ChatOpenAI(model_name="gpt-4o", temperature=0.7)
         
         # Статичные вопросы и поля
         self.static_questions = {
@@ -45,7 +44,28 @@ class ResearcherAgent:
         # Для обратной совместимости
         self.fields_to_collect = self.static_questions
     
+    @abstractmethod
+    async def evaluate_answer_quality(self, field: str, answer: str) -> Dict:
+        """Оценивает качество ответа на вопрос - должен быть реализован в наследниках"""
+        pass
+    
+    @abstractmethod
+    async def generate_clarification(self, field: str, answer: str, missing_aspects: list) -> str:
+        """Генерирует уточняющий вопрос - должен быть реализован в наследниках"""
+        pass
+    
+    @abstractmethod
+    async def generate_interview_brief(self, fields: Dict) -> str:
+        """Генерирует интервью-бриф на основе собранных данных - должен быть реализован в наследниках"""
+        pass
+    
+    @abstractmethod
+    async def generate_instruction(self, fields: Dict) -> str:
+        """Генерирует инструкцию для респондентов - должен быть реализован в наследниках"""
+        pass
+    
     async def start_dialog(self, message: types.Message, state: FSMContext):
+        """Начинает диалог с исследователем"""
         user_id = message.from_user.id
         
         # Create new interview
@@ -96,9 +116,11 @@ class ResearcherAgent:
         await self.zep.add_message(zep_session_id, "assistant", first_question)
     
     async def process_text_message(self, message: types.Message, state: FSMContext):
+        """Обрабатывает текстовое сообщение"""
         await self._process_message(message.text, message, state)
     
-    async def process_voice_message(self, message: types.Message, state: FSMContext, bot: Bot):
+    async def process_voice_message(self, message: types.Message, state: FSMContext, bot):
+        """Обрабатывает голосовое сообщение"""
         # Send processing indicator
         processing_msg = await message.answer("🎤 Обрабатываю голосовое сообщение...")
         
@@ -123,6 +145,7 @@ class ResearcherAgent:
             await message.answer("❌ Не удалось распознать голосовое сообщение. Попробуйте еще раз или отправьте текстом.")
     
     async def _process_message(self, text: str, message: types.Message, state: FSMContext):
+        """Основная логика обработки сообщений"""
         data = await state.get_data()
         user_id = message.from_user.id
         interview_id = data.get("interview_id")
@@ -187,7 +210,7 @@ class ResearcherAgent:
         # Extract answer for current field
         if current_field:
             # Use field analyzer to check answer quality
-            quality_result = await self._evaluate_answer_quality(current_field, text)
+            quality_result = await self.evaluate_answer_quality(current_field, text)
             
             logger.info(f"Quality evaluation for {current_field}: {quality_result}")
             
@@ -251,7 +274,7 @@ class ResearcherAgent:
                         await self._finish_collection(message, state)
                 else:
                     # Generate clarification question
-                    clarification = await self._generate_clarification(
+                    clarification = await self.generate_clarification(
                         current_field,
                         text,
                         quality_result["missing_aspects"]
@@ -260,124 +283,8 @@ class ResearcherAgent:
                     await self.zep.add_message(zep_session_id, "assistant", clarification)
                     await state.update_data(is_clarification=True, last_question=clarification)
     
-    async def _evaluate_answer_quality(self, field: str, answer: str) -> Dict:
-        """Оценивает качество ответа на вопрос"""
-        with open("src/prompts/field_analyzer.txt", "r") as f:
-            template = f.read()
-        
-        prompt = PromptTemplate(
-            input_variables=["field_name", "field_description", "question", "answer"],
-            template=template
-        )
-        
-        field_description = {
-            "name": "Имя или обращение к исследователю",
-            "industry": "Сфера деятельности или ниша бизнеса",
-            "target": "Целевая аудитория или объект исследования с конкретными характеристиками",
-            "hypotheses": "Конкретные гипотезы в формате если...то...",
-            "style": "Стиль общения с респондентами",
-            "success_metric": "Метрики успеха исследования",
-            "constraints": "Ограничения по времени, темам или другие требования",
-            "existing_data": "Информация о существующих данных или исследованиях"
-        }
-        
-        try:
-            response = await self.llm.ainvoke(
-                prompt.format(
-                    field_name=field,
-                    field_description=field_description.get(field, ""),
-                    question=self.static_questions.get(field, ""),
-                    answer=answer
-                )
-            )
-            
-            # Parse JSON response
-            content = response.content.strip()
-            logger.debug(f"LLM response for {field}: {content[:200]}...")
-            
-            # Clean up the response - remove markdown code blocks
-            if content.startswith("```json") and content.endswith("```"):
-                content = content[7:-3].strip()
-            elif content.startswith("```") and content.endswith("```"):
-                content = content[3:-3].strip()
-            
-            # Additional cleanup for common LLM formatting issues
-            # Remove leading/trailing whitespace and newlines
-            content = content.strip()
-            
-            # If content doesn't start with { or [, try to find JSON object
-            if not content.startswith('{') and not content.startswith('['):
-                # Try to find the first { and extract from there
-                json_start = content.find('{')
-                if json_start != -1:
-                    content = content[json_start:]
-                    logger.warning(f"Extracted JSON from position {json_start}")
-            
-            result = json.loads(content)
-            logger.debug(f"Parsed result for {field}: {result}")
-            return result
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error in evaluate_answer_quality: {e}")
-            logger.error(f"Response content: {content[:200]}...")
-            # При ошибке парсинга JSON не принимаем ответ автоматически
-            return {
-                "is_complete": False,
-                "confidence": 0.0,
-                "missing_aspects": ["Не удалось проанализировать ответ"],
-                "extracted_value": None
-            }
-        except Exception as e:
-            logger.error(f"Error evaluating answer quality: {e}")
-            logger.error(f"Original response content: {repr(response.content)}")
-            # При других ошибках тоже не принимаем ответ автоматически
-            return {
-                "is_complete": False,
-                "confidence": 0.0,
-                "missing_aspects": ["Произошла ошибка при анализе"],
-                "extracted_value": None
-            }
-    
-    async def _generate_clarification(self, field: str, answer: str, missing_aspects: list) -> str:
-        """Генерирует уточняющий вопрос"""
-        with open("src/prompts/clarification_generator.txt", "r") as f:
-            template = f.read()
-        
-        prompt = PromptTemplate(
-            input_variables=["field_name", "original_question", "answer", "missing_aspects", "conversation_history"],
-            template=template
-        )
-        
-        response = await self.llm.ainvoke(
-            prompt.format(
-                field_name=field,
-                original_question=self.static_questions[field],
-                answer=answer,
-                missing_aspects=missing_aspects,
-                conversation_history=""  # Can be enhanced with actual history
-            )
-        )
-        
-        return response.content.strip()
-    
-    async def _generate_interview_brief(self, fields: Dict) -> str:
-        """Генерирует интервью-бриф на основе собранных данных"""
-        with open("src/prompts/interview_brief_generator.txt", "r") as f:
-            template = f.read()
-        
-        prompt = PromptTemplate(
-            input_variables=["answers"],
-            template=template
-        )
-        
-        # Just pass the fields as they are, let the LLM handle formatting
-        response = await self.llm.ainvoke(
-            prompt.format(answers=json.dumps(fields, ensure_ascii=False, indent=2))
-        )
-        
-        return response.content
-    
     async def _finish_collection(self, message: types.Message, state: FSMContext):
+        """Завершает сбор данных и создает интервью"""
         data = await state.get_data()
         interview_id = data.get("interview_id")
         collected_fields = data.get("collected_fields", {})
@@ -414,7 +321,7 @@ class ResearcherAgent:
                 return
             
             # Generate interview brief
-            interview_brief = await self._generate_interview_brief(collected_fields)
+            interview_brief = await self.generate_interview_brief(collected_fields)
             
             # Extract instruction from brief (first message to respondent)
             # Simple extraction - find the section and get the content
@@ -425,7 +332,7 @@ class ResearcherAgent:
                 instruction = "\n".join(instruction_lines).strip()
             else:
                 # Fallback to generating instruction the old way
-                instruction = await self._generate_instruction(collected_fields)
+                instruction = await self.generate_instruction(collected_fields)
             
             # Update interview
             # Сохраняем researcher_telegram_id в fields для обратной совместимости
@@ -442,9 +349,6 @@ class ResearcherAgent:
                 update_data["instruction"] = instruction
                 # Также сохраняем в fields для обратной совместимости
                 update_data["fields"]["instruction"] = instruction
-            
-            # Пока сохраняем все поля только в JSONB fields
-            # После выполнения миграций можно будет добавить сохранение на верхний уровень
             
             try:
                 self.supabase.update_interview(interview_id, update_data)
@@ -479,9 +383,6 @@ class ResearcherAgent:
             # Send the interview brief
             await message.answer(interview_brief, parse_mode="Markdown")
             
-            # Optionally save brief as a file
-            # TODO: Implement file generation and sending
-            
             await state.clear()
             
         except Exception as e:
@@ -491,27 +392,3 @@ class ResearcherAgent:
                 "Пожалуйста, попробуйте позже или обратитесь к администратору."
             )
             await state.clear()
-    
-    async def _generate_instruction(self, fields: Dict) -> str:
-        with open("src/prompts/instruction_generator.txt", "r") as f:
-            template = f.read()
-        
-        prompt = PromptTemplate(
-            input_variables=["fields"],
-            template=template
-        )
-        
-        response = await self.llm.ainvoke(prompt.format(fields=fields))
-        return response.content
-    
-    def _is_valid_url(self, text: str) -> bool:
-        """Проверяет, является ли текст валидной ссылкой"""
-        import re
-        url_pattern = re.compile(
-            r'^https?://'  # http:// or https://
-            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-            r'localhost|'  # localhost...
-            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-            r'(?::\d+)?'  # optional port
-            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-        return bool(url_pattern.match(text.strip()))

@@ -1,0 +1,278 @@
+{
+  "name": "CustDev Bot - Research Orchestrator (AI Agent)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "custdev-ai/research",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook_trigger",
+      "name": "Webhook from Bot",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "custdev-ai-research"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.session_id }}",
+        "contextWindowLength": 10
+      },
+      "id": "memory_manager",
+      "name": "Memory Manager",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.2,
+      "position": [450, 200]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 2000
+        }
+      },
+      "id": "chat_model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [450, 100],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agentType": "toolsAgent",
+        "promptType": "define",
+        "text": "Ты - интеллектуальный помощник для создания кастдев-исследований. \n\nТвоя задача:\n1. Анализировать сообщения исследователя\n2. Определять, какую информацию нужно собрать или обработать\n3. Использовать доступные инструменты для выполнения задач\n4. Сохранять важную информацию в память\n\nТекущий контекст:\n- Тип сообщения: {{ $json.type }}\n- Поле для заполнения: {{ $json.field }}\n- Сообщение: {{ $json.message }}\n\nИспользуй инструменты в следующем порядке:\n1. Если это ответ на вопрос - сначала проанализируй качество (Field Analyzer)\n2. Если ответ неполный - сгенерируй уточнение (Clarification Generator)\n3. Если все поля собраны - создай бриф (Brief Creator)\n4. Всегда сохраняй данные в базу (Database Writer)\n\nОтвечай на русском языке.",
+        "hasOutputParser": true
+      },
+      "id": "ai_agent",
+      "name": "Research AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "name": "Field Analyzer",
+        "description": "Анализирует качество ответа исследователя на конкретное поле",
+        "workflowId": "={{ $fromAI('field_analyzer_workflow_id', 'ID workflow для анализа полей') }}"
+      },
+      "id": "field_analyzer_tool",
+      "name": "Field Analyzer Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [450, 400]
+    },
+    {
+      "parameters": {
+        "name": "Clarification Generator",
+        "description": "Генерирует уточняющий вопрос для неполного ответа",
+        "workflowId": "={{ $fromAI('clarification_workflow_id', 'ID workflow для генерации уточнений') }}"
+      },
+      "id": "clarification_tool",
+      "name": "Clarification Generator Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [450, 500]
+    },
+    {
+      "parameters": {
+        "name": "Brief Creator",
+        "description": "Создает полный интервью-бриф на основе собранных данных",
+        "workflowId": "={{ $fromAI('brief_workflow_id', 'ID workflow для создания брифа') }}"
+      },
+      "id": "brief_creator_tool",
+      "name": "Brief Creator Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [450, 600]
+    },
+    {
+      "parameters": {
+        "name": "Database Writer",
+        "description": "Сохраняет данные в Supabase",
+        "workflowId": "={{ $fromAI('database_workflow_id', 'ID workflow для работы с БД') }}"
+      },
+      "id": "database_tool",
+      "name": "Database Writer Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [450, 700]
+    },
+    {
+      "parameters": {
+        "structuredOutputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "Выполненное действие"
+            },
+            "result": {
+              "type": "object",
+              "description": "Результат выполнения"
+            },
+            "next_message": {
+              "type": "string",
+              "description": "Сообщение для отправки пользователю"
+            },
+            "field_complete": {
+              "type": "boolean",
+              "description": "Поле полностью заполнено?"
+            }
+          },
+          "required": ["action", "result", "next_message"]
+        }
+      },
+      "id": "output_parser",
+      "name": "Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [450, 800]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond_webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Webhook from Bot": {
+      "main": [
+        [
+          {
+            "node": "Research AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory Manager": {
+      "ai_memory": [
+        [
+          {
+            "node": "Research AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Research AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Field Analyzer Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Research AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clarification Generator Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Research AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brief Creator Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Research AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Database Writer Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Research AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Research AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "n8n workflow orchestrator for research flow. Uses Tools to analyze fields, generate clarifications, create briefs and save data."
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "ai-agent",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "orchestrator",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}

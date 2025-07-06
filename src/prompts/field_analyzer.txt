@@ -29,10 +29,22 @@
 - общие слова без конкретики: "любой", "всякий", "разный", "обычный"
 
 # === OUTPUT FORMAT ===
-Верни ТОЛЬКО валидный JSON без дополнительного текста:
+Верни ТОЛЬКО валидный JSON объект. НЕ добавляй никакого текста до или после JSON.
+НЕ используй markdown форматирование (```json).
+Начинай ответ сразу с открывающей фигурной скобки {.
+
+Пример корректного ответа:
 {
-  "is_complete": true/false,
-  "confidence": 0.0-1.0,
-  "missing_aspects": ["аспект1", "аспект2"],
-  "extracted_value": "извлеченное значение или null"
+  "is_complete": true,
+  "confidence": 0.9,
+  "missing_aspects": [],
+  "extracted_value": "Артем"
+}
+
+Структура ответа:
+{
+  "is_complete": boolean (true или false),
+  "confidence": number (от 0.0 до 1.0),
+  "missing_aspects": array of strings (массив строк),
+  "extracted_value": string или null
 }

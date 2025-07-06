@@ -1,0 +1,390 @@
+{
+  "name": "CustDev Bot - Respondent Orchestrator (AI Agent)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "custdev-ai/respondent",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook_trigger",
+      "name": "Webhook from Bot",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "custdev-ai-respondent"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.session_id }}",
+        "contextWindowLength": 15
+      },
+      "id": "memory_manager",
+      "name": "Interview Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.2,
+      "position": [450, 200]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 1000
+        }
+      },
+      "id": "chat_model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [450, 100],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agentType": "conversationalAgent",
+        "promptType": "define",
+        "text": "Ты - опытный интервьюер, проводящий глубинные интервью для кастдев-исследования.\n\nТвоя роль:\n1. Задавать открытые вопросы, которые помогают респонденту рассказать о своем опыте\n2. Внимательно слушать и развивать темы на основе ответов\n3. Не навязывать свое мнение, а узнавать мнение респондента\n4. Поддерживать дружелюбную атмосферу\n\nКонтекст интервью:\n- Инструкция: {{ $json.instruction }}\n- Номер вопроса: {{ $json.question_count }}\n- Минимум вопросов: 8\n- Максимум вопросов: {{ $json.max_questions || 15 }}\n\nПравила:\n1. Если это первый вопрос - начни с общего вопроса о опыте респондента\n2. Следующие вопросы строй на основе предыдущих ответов\n3. После 8+ вопросов спроси, хочет ли респондент что-то добавить\n4. Завершай интервью благодарностью\n\nИспользуй доступные инструменты для:\n- Генерации следующего вопроса\n- Анализа полноты ответов\n- Создания резюме в конце",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Ты проводишь интервью на русском языке. Будь дружелюбным и заинтересованным."
+        }
+      },
+      "id": "ai_agent",
+      "name": "Interview AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "name": "Question Generator",
+        "description": "Генерирует следующий вопрос на основе контекста интервью",
+        "workflowId": "={{ $fromAI('question_generator_id', 'ID workflow для генерации вопросов') }}"
+      },
+      "id": "question_tool",
+      "name": "Question Generator Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [450, 400]
+    },
+    {
+      "parameters": {
+        "name": "Answer Analyzer",
+        "description": "Анализирует глубину и качество ответа респондента",
+        "workflowId": "={{ $fromAI('answer_analyzer_id', 'ID workflow для анализа ответов') }}"
+      },
+      "id": "analyzer_tool",
+      "name": "Answer Analyzer Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [450, 500]
+    },
+    {
+      "parameters": {
+        "name": "Summary Creator",
+        "description": "Создает резюме интервью по всем ответам",
+        "workflowId": "={{ $fromAI('summary_creator_id', 'ID workflow для создания резюме') }}"
+      },
+      "id": "summary_tool",
+      "name": "Summary Creator Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [450, 600]
+    },
+    {
+      "parameters": {
+        "structuredOutputSchema": {
+          "type": "object",
+          "properties": {
+            "next_action": {
+              "type": "string",
+              "enum": ["ask_question", "end_interview", "create_summary"],
+              "description": "Следующее действие"
+            },
+            "message": {
+              "type": "string",
+              "description": "Сообщение для респондента"
+            },
+            "question": {
+              "type": "string",
+              "description": "Следующий вопрос (если есть)"
+            },
+            "should_continue": {
+              "type": "boolean",
+              "description": "Продолжать интервью?"
+            },
+            "interview_quality": {
+              "type": "string",
+              "enum": ["excellent", "good", "fair", "poor"],
+              "description": "Оценка качества интервью"
+            }
+          },
+          "required": ["next_action", "message", "should_continue"]
+        }
+      },
+      "id": "output_parser",
+      "name": "Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [450, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check_continue",
+              "leftValue": "={{ $json.should_continue }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check_continue",
+      "name": "Continue Interview?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "continue_interview",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "name": "next_question",
+              "type": "string",
+              "value": "={{ $json.question || $json.message }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format_continue",
+      "name": "Format Continue Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1050, 250]
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "continue_interview",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "name": "final_message",
+              "type": "string",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "interview_complete",
+              "type": "boolean",
+              "value": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format_end",
+      "name": "Format End Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1050, 350]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Webhook from Bot": {
+      "main": [
+        [
+          {
+            "node": "Interview AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interview Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Interview AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Interview AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Question Generator Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Interview AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Analyzer Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Interview AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary Creator Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Interview AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Interview AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interview AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Continue Interview?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue Interview?": {
+      "main": [
+        [
+          {
+            "node": "Format Continue Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format End Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Continue Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format End Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "n8n workflow orchestrator for respondent interviews. Uses conversational agent with memory and tools for dynamic interview flow."
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "ai-agent",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "orchestrator",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "interview",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}

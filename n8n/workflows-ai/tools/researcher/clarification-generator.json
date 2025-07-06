@@ -1,0 +1,222 @@
+{
+  "name": "Clarification Generator Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "clarification-generator",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "clarification-generator-tool"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты - опытный интервьюер, помогающий исследователям собрать полную информацию. Генерируй дружелюбные и понятные уточняющие вопросы."
+            },
+            {
+              "role": "user",
+              "content": "Исследователь ответил: \"{{ $json.answer }}\"\n\nНедостающие аспекты:\n{{ $json.missing_aspects.join('\\n- ') }}\n\nСгенерируй уточняющий вопрос, который:\n1. Поможет раскрыть недостающие аспекты\n2. Будет конкретным и понятным\n3. Не будет звучать критично\n4. Покажет заинтересованность в деталях"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 200
+        }
+      },
+      "id": "chat_model",
+      "name": "Generate Clarification",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has_missing_aspects",
+              "leftValue": "={{ $json.missing_aspects.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if",
+      "name": "Has Missing Aspects?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [250, 450]
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "clarification",
+              "type": "string",
+              "value": "={{ $json.message.content }}"
+            },
+            {
+              "name": "needs_clarification",
+              "type": "boolean",
+              "value": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set_clarification",
+      "name": "Set Clarification",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [650, 250]
+    },
+    {
+      "parameters": {
+        "values": {
+          "values": [
+            {
+              "name": "clarification",
+              "type": "string",
+              "value": "Отлично! Вы предоставили полный ответ."
+            },
+            {
+              "name": "needs_clarification",
+              "type": "boolean", 
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set_no_clarification",
+      "name": "No Clarification Needed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [650, 350]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Has Missing Aspects?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Missing Aspects?": {
+      "main": [
+        [
+          {
+            "node": "Generate Clarification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Clarification Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Clarification": {
+      "main": [
+        [
+          {
+            "node": "Set Clarification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Clarification": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Clarification Needed": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Tool for generating clarification questions based on missing aspects. Uses conditional logic to avoid unnecessary questions."
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "tool",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}

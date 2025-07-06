@@ -1,0 +1,130 @@
+{
+  "name": "Field Analyzer Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "field-analyzer",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "field-analyzer-tool"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты - эксперт по анализу качества ответов в кастдев-исследованиях. Твоя задача - оценить, насколько полно и качественно исследователь ответил на вопрос."
+            },
+            {
+              "role": "user", 
+              "content": "Проанализируй ответ:\n\nПоле: {{ $json.field }}\nВопрос: {{ $json.question }}\nОтвет: {{ $json.answer }}\n\nОцени по критериям:\n1. Полнота - все ли аспекты раскрыты\n2. Конкретность - есть ли детали, примеры\n3. Релевантность - соответствует ли ответ вопросу\n\nВерни оценку от 0 до 10 и список недостающих аспектов."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "responseFormat": {
+            "values": {
+              "type": "json_object"
+            }
+          }
+        }
+      },
+      "id": "chat_model",
+      "name": "Analyze Answer Quality",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI response\nconst aiResponse = JSON.parse($json.message.content);\n\n// Determine if answer is complete\nconst isComplete = aiResponse.score >= 7 && (!aiResponse.missing_aspects || aiResponse.missing_aspects.length === 0);\n\n// Format response\nreturn {\n  field: $('webhook').item.json.field,\n  is_complete: isComplete,\n  score: aiResponse.score || 0,\n  missing_aspects: aiResponse.missing_aspects || [],\n  feedback: aiResponse.feedback || 'Ответ проанализирован',\n  confidence: aiResponse.confidence || 0.8\n};"
+      },
+      "id": "code",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Analyze Answer Quality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Answer Quality": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Tool for analyzing field answer quality. Returns completeness score and missing aspects."
+  },
+  "tags": [
+    {
+      "name": "custdev-bot",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "tool",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}
